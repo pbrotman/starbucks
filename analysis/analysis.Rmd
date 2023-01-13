@@ -1,0 +1,161 @@
+---
+title: "analysis"
+author: "Parker Brotman"
+date: '2023-01-06'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+```
+
+
+# Load data
+
+## Starbucks data
+```{r}
+tbl_starbucks <- read_csv("../data/starbucks/directory.csv") %>%
+  filter(Country=="US")
+```
+
+### Find county for starbucks
+Convert starbucks long/lat to sf points
+```{r}
+pts_starbucks <- st_as_sf(tbl_starbucks, coords = c("Longitude", "Latitude"), crs = 4326) #sets/reads format to WGS 84
+```
+
+Load county polygons
+```{r}
+shape_county <- st_read("../data/census/Geographic Shape Files/cb_2018_us_county_500k/cb_2018_us_county_500k.shp") %>%
+  st_transform(crs = 4326)
+```
+Left join Starbucks and county
+```{r}
+tbl_starbucks_w_county <- st_join(pts_starbucks, shape_county)
+```
+
+Check: View Starbucks in MD
+```{r}
+ggplot(shape_county %>% filter(STATEFP=="24"))+
+  geom_sf(aes())+
+  geom_sf(data=tbl_starbucks_w_county %>% filter(STATEFP=="24"))
+```
+
+
+## Census data
+
+### Race
+```{r}
+tbl_race_raw <- read_csv("../data/census/Race/County Level/DECENNIALPL2020.P1-Data.csv", skip = 1) 
+
+tbl_race <- tbl_race_raw%>% 
+  select(-matches("^Annotation")) %>%
+  rename_with(.fn = ~str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=\\:?$)"), .cols = starts_with("!"))
+```
+
+# Analysis
+
+Tally # Starbucks per county
+```{r}
+tbl_starbucks_per_county <- tbl_starbucks_w_county %>% 
+  group_by(AFFGEOID, NAME, `State/Province`) %>% 
+  summarise(n = n()) %>% 
+  arrange(desc(n))
+tbl_starbucks_per_county
+```
+
+Join with race data
+```{r}
+tbl_sb_race <- full_join(tbl_starbucks_per_county, tbl_race, by=c("AFFGEOID"="Geography")) %>%
+  filter(!is.na(Total)) %>% 
+  mutate(n = replace_na(n, 0)) %>% 
+  separate(`Geographic Area Name`, c("County", "State"), ", ")
+tbl_sb_race
+```
+
+## Models
+
+### Total pop
+```{r}
+ggplot(tbl_sb_race, aes(x=Total, y=n))+
+  geom_point()+
+  stat_smooth(method = "lm", col = "red")
+```
+
+
+```{r}
+lm_pop <- lm(n ~ Total, data=tbl_sb_race)
+# lm_pop <- lm(n ~ Total, data=tbl_sb_race %>% filter(n<400))
+summary(lm_pop)
+```
+
+```{r}
+plot(lm_pop)
+# Distribution is heavy-tailed
+```
+#### Analyze residuals
+
+Residual by county
+```{r}
+tbl_res.lm_pop <- tbl_sb_race %>% 
+  st_set_geometry(NULL) %>% 
+  add_column(pred = predict(lm_pop),
+             res = resid(lm_pop)) %>% 
+  full_join(shape_county, by = "AFFGEOID") %>% 
+  select(AFFGEOID, County, State, n, Total, pred, res, geometry)
+  # View()
+  # class()
+```
+
+Residuals geographic view
+```{r}
+tbl_res.lm_pop %>% 
+  # filter(State %in% c("District of Columbia", "Maryland", "Virginia")) %>% 
+  filter(State=="Maryland") %>% 
+  st_set_geometry("geometry") %>% 
+  ggplot()+
+  geom_sf(aes(fill=res))
+```
+Largest residuals
+```{r}
+tbl_res.lm_pop %>% 
+  ungroup() %>% 
+  select(-AFFGEOID) %>% 
+  arrange(desc(res))
+```
+
+Smallest residuals
+```{r}
+tbl_res.lm_pop %>% 
+  ungroup() %>% 
+  select(-AFFGEOID) %>% 
+  arrange(res)
+```
+
+### Race
+```{r}
+lm_race <- lm(n ~ Total + `White alone` + `Black or African American alone` + `Asian alone`, data=tbl_sb_race)
+summary(lm_race)
+plot(lm_race)
+```
+
+## What about predicting Starbucks per capita (doesn't work as well)
+```{r}
+tbl_sb_race_pct <- tbl_sb_race %>% 
+  # rename_all(~str_replace_all(., " ", "_")) %>% 
+  select(-Total, Total) %>% # need to put total at end, otherwise next columns are divided by 1
+  mutate_if(~is.numeric(.), ~./Total)
+```
+
+
+```{r}
+lm_pop_pct <- lm(n ~ `White alone` + `Black or African American alone` + `Asian alone`, data=tbl_sb_race_pct)
+summary(lm_pop_pct)
+plot(lm_pop_pct)
+```
+
