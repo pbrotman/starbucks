@@ -58,7 +58,15 @@ tbl_race <- tbl_race_raw%>%
   rename_with(.fn = ~str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=\\:?$)"), .cols = starts_with("!"))
 ```
 
+### Region/Division
+```{r}
+tbl_regions <- read_csv("../data/census/Regions/regions.csv")
+```
+
+
 # Analysis
+
+## Data Joining
 
 Tally # Starbucks per county
 ```{r}
@@ -74,9 +82,20 @@ Join with race data
 tbl_sb_race <- full_join(tbl_starbucks_per_county, tbl_race, by=c("AFFGEOID"="Geography")) %>%
   filter(!is.na(Total)) %>% 
   mutate(n = replace_na(n, 0)) %>% 
-  separate(`Geographic Area Name`, c("County", "State"), ", ")
+  separate(`Geographic Area Name`, c("County", "State"), ", ") %>% 
+  rename("State Code" = "State/Province") %>% 
+  select(-"...145") %>% 
+  filter(State!="Puerto Rico")
 tbl_sb_race
 ```
+
+Join with regions table
+```{r}
+tbl_sb_race_region <- tbl_sb_race %>% 
+  select(-`State Code`) %>% 
+  left_join(tbl_regions, by=c("State"))
+```
+
 
 ## Models
 
@@ -92,12 +111,10 @@ ggplot(tbl_sb_race, aes(x=Total, y=n))+
 lm_pop <- lm(n ~ Total, data=tbl_sb_race)
 # lm_pop <- lm(n ~ Total, data=tbl_sb_race %>% filter(n<400))
 summary(lm_pop)
-```
-
-```{r}
 plot(lm_pop)
 # Distribution is heavy-tailed
 ```
+
 #### Analyze residuals
 
 Residual by county
@@ -108,8 +125,6 @@ tbl_res.lm_pop <- tbl_sb_race %>%
              res = resid(lm_pop)) %>% 
   full_join(shape_county, by = "AFFGEOID") %>% 
   select(AFFGEOID, County, State, n, Total, pred, res, geometry)
-  # View()
-  # class()
 ```
 
 Residuals geographic view
@@ -144,7 +159,7 @@ summary(lm_race)
 plot(lm_race)
 ```
 
-## What about predicting Starbucks per capita (doesn't work as well)
+### What about predicting Starbucks per capita (doesn't work as well)
 ```{r}
 tbl_sb_race_pct <- tbl_sb_race %>% 
   # rename_all(~str_replace_all(., " ", "_")) %>% 
@@ -159,3 +174,54 @@ summary(lm_pop_pct)
 plot(lm_pop_pct)
 ```
 
+#### Likewise, log doesn't work
+Doesn't work in any combination of log.
+```{r, eval=FALSE}
+lm_pop_log <- lm(log1p(n) ~ log1p(Total), data=tbl_sb_race)
+summary(lm_pop_log)
+plot(lm_pop_log)
+```
+
+### Regions/Divisions as predictor
+```{r}
+ggplot(tbl_sb_race_region, aes(x=Total, y=n))+
+  facet_wrap(~Division)+
+  geom_point()+
+  stat_smooth(method = "lm", col = "red")
+```
+
+```{r}
+lm_pop_region <- lm(n ~ Total*Region, data=tbl_sb_race_region) # Midwest in reference
+summary(lm_pop_region)
+plot(lm_pop_region)
+```
+
+```{r}
+lm_pop_division <- lm(n ~ Total*Division, data=tbl_sb_race_region) # East North Central is reference
+summary(lm_pop_division)
+plot(lm_pop_division)
+```
+
+Residual by county
+```{r}
+tbl_res.lm_pop_division <- tbl_sb_race_region %>% 
+  st_set_geometry(NULL) %>% 
+  add_column(pred = predict(lm_pop_division),
+             res = resid(lm_pop_division)) %>% 
+  full_join(shape_county, by = "AFFGEOID") %>% 
+  select(AFFGEOID, County, State, Division, n, Total, pred, res, geometry)
+```
+
+```{r}
+tbl_res.lm_pop_division %>% 
+  ungroup() %>% 
+  select(-AFFGEOID) %>% 
+  arrange(desc(res))
+```
+
+```{r}
+tbl_res.lm_pop_division %>% 
+  ungroup() %>% 
+  select(-AFFGEOID) %>% 
+  arrange(res)
+```
