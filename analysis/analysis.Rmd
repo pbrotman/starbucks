@@ -31,7 +31,7 @@ pts_starbucks <- st_as_sf(tbl_starbucks, coords = c("Longitude", "Latitude"), cr
 
 Load county polygons
 ```{r}
-shape_county <- st_read("../data/census/Geographic Shape Files/cb_2018_us_county_500k/cb_2018_us_county_500k.shp") %>%
+shape_county <- st_read("../data/census/Geography/Geographic Shape Files/cb_2018_us_county_500k/cb_2018_us_county_500k.shp") %>%
   st_transform(crs = 4326)
 ```
 Left join Starbucks and county
@@ -51,16 +51,16 @@ ggplot(shape_county %>% filter(STATEFP=="24"))+
 
 ### Race
 ```{r}
-tbl_race_raw <- read_csv("../data/census/Race/County Level/DECENNIALPL2020.P1-Data.csv", skip = 1) 
+tbl_race_raw <- read_csv("../data/census/Decennial Census 2020/Race/County Level/DECENNIALPL2020.P1-Data.csv", skip = 1) 
 
 tbl_race <- tbl_race_raw%>% 
   select(-matches("^Annotation")) %>%
-  rename_with(.fn = ~str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=\\:?$)"), .cols = starts_with("!"))
+  rename_with(.fn = ~str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=\\:?$)"), .cols = starts_with("!"))  # Preceded by !!, some number of non-!: characters, followed by end line or : + end
 ```
 
 ### Region/Division
 ```{r}
-tbl_regions <- read_csv("../data/census/Regions/regions.csv")
+tbl_regions <- read_csv("../data/census/Geography/Regions/regions.csv")
 ```
 
 
@@ -225,3 +225,4 @@ tbl_res.lm_pop_division %>%
   select(-AFFGEOID) %>% 
   arrange(res)
 ```
+

@@ -1,0 +1,99 @@
+---
+title: "Analysis 3.0"
+author: "Parker Brotman"
+date: '2023-01-16'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+```
+
+# Load data
+
+## Starbucks data
+```{r}
+tbl_starbucks <- read_csv("../data/starbucks/directory.csv") %>%
+  filter(Country=="US")
+```
+
+## Census data
+
+While I considered a more generalized read design that reads every file in a specified folder, I opted instead to read each table individually, since ultimately, I'll need to subset the # of variables anyway.
+
+### Define functions
+```{r}
+fn_load_decennial <- function(fname){
+  str_c("../data/census/Decennial_2020/County Level/", fname) %>% 
+    read_csv(skip = 1) %>% 
+    select(-matches("^Annotation")) %>% 
+    rename_with(.fn = ~str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=\\:?$)"), .cols = starts_with("!")) %>% # Preceded by !!, some number of non-!: characters, followed by end line or : + end 
+    return()
+}
+```
+
+```{r}
+rename_prefix <- function(tbl, old_prefix, new_prefix){
+  tbl %>% 
+    rename_with(.fn = ~str_c(new_prefix, str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=$)")), .cols = starts_with(old_prefix)) %>% 
+    return()
+}
+```
+
+
+### Race & Hispanic/Latino
+```{r}
+tbl_race <- fn_load_decennial("Race (DECENNIALPL2020.P1-Data).csv") %>% 
+  select(Geography:`Population of two or more races`)
+
+tbl_hisp_latino <- fn_load_decennial("Hispanic-Latino (DECENNIALPL2020.P2-Data).csv") %>% 
+  select(Geography:`Not Hispanic or Latino`)
+
+list_tbl_decennial <- list(race = tbl_race, hisp_latino = tbl_hisp_latino)
+```
+
+
+### Age & Sex
+```{r}
+tbl_age_sex <- read_csv("../data/census/ACS_2021/County Level/Age-Sex (ACSST5Y2021.S0101-Data).csv", skip = 1) %>% 
+  select(-matches("^Annotation|^Margin of Error|^Estimate\\!\\!Percent")) %>%
+  rename_prefix("Estimate!!Total", "") %>% 
+  rename_prefix("Estimate!!Male", "Male & ") %>%
+  rename_prefix("Estimate!!Female", "Female & ") %>% 
+  select(Geography:`85 years and over`, `Male & Total population`, `Female & Total population`) %>% 
+  rename(Male=`Male & Total population`, 
+         Female=`Female & Total population`)
+```
+
+### Education
+```{r}
+tbl_education <- read_csv("../data/census/ACS_2021/County Level/Education (ACSST5Y2021.S1501-Data).csv", skip = 1) %>% 
+  select(Geography, `Geographic Area Name`, matches("^Estimate!!Total!!AGE BY EDUCATIONAL ATTAINMENT!!Population 25 years and over")) %>% 
+  rename_prefix("Estimate!!Total", "") %>% 
+  select(Geography:`Graduate or professional degree`, -`Population 25 years and over`)
+```
+
+### Households
+Note: relevant data only available in % of total households (create intereaction term with population to make it scale).
+```{r}
+tbl_household <- read_csv("../data/census/ACS_2021/County Level/Household (ACSST5Y2021.S1101-Data).csv", skip = 1) %>% 
+  select(Geography, `Geographic Area Name`, matches("^Estimate!!Total!!Total Households!!UNITS IN STRUCTURE|^Estimate!!Total!!Total Households!!HOUSING TENURE")) %>% 
+  rename_prefix("Estimate!!Total", "% in ")
+```
+
+### Income
+Note: relevant data only available in % of total households (create intereaction term with population to make it scale).
+```{r}
+tbl_income <- read_csv("../data/census/ACS_2021/County Level/Income (ACSST5Y2021.S1901-Data).csv", skip = 1) %>% 
+  select(Geography, `Geographic Area Name`, matches("^Estimate!!Households!!Total"), -`Estimate!!Households!!Total`) %>% 
+  rename_prefix("Estimate", "% ")
+```
+
+
+
+# Combine data
