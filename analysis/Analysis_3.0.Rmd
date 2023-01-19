@@ -40,7 +40,7 @@ fn_load_decennial <- function(fname){
 ```{r}
 rename_prefix <- function(tbl, old_prefix, new_prefix){
   tbl %>% 
-    rename_with(.fn = ~str_c(new_prefix, str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=$)")), .cols = starts_with(old_prefix)) %>% 
+    rename_with(.fn = ~str_c(new_prefix, str_extract(.x, "(?<=\\!\\!)[^\\!\\:]*(?=\\:?$)")), .cols = starts_with(old_prefix)) %>% 
     return()
 }
 ```
@@ -59,15 +59,38 @@ list_tbl_decennial <- list(race = tbl_race, hisp_latino = tbl_hisp_latino)
 
 
 ### Age & Sex
+
 ```{r}
 tbl_age_sex <- read_csv("../data/census/ACS_2021/County Level/Age-Sex (ACSST5Y2021.S0101-Data).csv", skip = 1) %>% 
-  select(-matches("^Annotation|^Margin of Error|^Estimate\\!\\!Percent")) %>%
+  select(Geography, `Geographic Area Name`, matches("^Estimate!!Total!!Total population!!AGE"), matches("^Estimate!!(Male|Female)!!Total population$")) %>% 
   rename_prefix("Estimate!!Total", "") %>% 
-  rename_prefix("Estimate!!Male", "Male & ") %>%
-  rename_prefix("Estimate!!Female", "Female & ") %>% 
-  select(Geography:`85 years and over`, `Male & Total population`, `Female & Total population`) %>% 
-  rename(Male=`Male & Total population`, 
-         Female=`Female & Total population`)
+  rename(Male = `Estimate!!Male!!Total population`,
+         Female = `Estimate!!Female!!Total population`) %>% 
+  # fn_combine_age()
+  mutate(`0 to 9 years` = `Under 5 years` + `5 to 9 years`,
+         `10 to 19 years` = `10 to 14 years` + `15 to 19 years`,
+         `20 to 29 years` = `20 to 24 years` + `25 to 29 years`,
+         `30 to 39 years` = `30 to 34 years` + `35 to 39 years`,
+         `40 to 49 years` = `40 to 44 years` + `45 to 49 years`,
+         `50 to 59 years` = `50 to 54 years` + `55 to 59 years`,
+         `60 to 69 years` = `60 to 64 years` + `65 to 69 years`,
+         `70 to 79 years` = `70 to 74 years` + `75 to 79 years`,
+         `80 years and over` = `80 to 84 years` + `85 years and over`,
+         .keep = "unused")
+```
+
+Side Note: This does the same as the big mutate function. If there were more cloumns, this could be helpful, but it is overengineered for our use0case and less clear than the mutate.
+```{r, eval=FALSE}
+# https://stackoverflow.com/questions/49816669/how-to-use-map-from-purrr-with-dplyrmutate-to-create-multiple-new-columns-base
+fn_combine_age <- function(tbl){
+  map_dfc(c("", 1:8), ~ tbl %>%
+            select(matches(str_glue("(^| ){.x}\\d "))) %>%  # select matching column pairs
+            reduce(`+`)) %>%  # sum adds all values, `+` adds within column
+    set_names(~map_chr(c("", 1:8), ~str_glue("{.}0 to {.}9 years"))) %>%
+    rename(`80 years and over` = `80 to 89 years`) %>%
+    bind_cols(select(tbl, -(`Under 5 years`:`85 years and over`)), .) %>%
+    return()
+}
 ```
 
 ### Education
@@ -94,6 +117,25 @@ tbl_income <- read_csv("../data/census/ACS_2021/County Level/Income (ACSST5Y2021
   rename_prefix("Estimate", "% ")
 ```
 
+### Industry
+Can group categories further using Bureau of Labor Statistic's industry hierarchy:
+https://www.bls.gov/iag/tgs/iag_index_naics.htm
+```{r}
+tbl_industry <- read_csv("../data/census/ACS_2021/County Level/Industry (ACSST5Y2021.S2403-Data).csv", skip = 1) %>% 
+  select(Geography, `Geographic Area Name`, matches("^Estimate!!Total!!.+$"), -matches("^Estimate!!Total!!.+!!.+!!.+$")) %>%  #only selecting one layer deep in specificity
+  rename_prefix("Estimate", "") %>% 
+  mutate(`Trade, transportation, and utilities` = `Wholesale trade` + `Retail trade` + `Transportation and warehousing, and utilities`, .keep="unused") %>% 
+  select(Geography:Manufacturing, `Trade, transportation, and utilities`, everything())
+```
+
+
+### Occupation
+
+```{r}
+tbl_occupation <- read_csv("../data/census/ACS_2021/County Level/Occupation (ACSST5Y2021.S2401-Data).csv", skip = 1) %>% 
+  select(Geography, `Geographic Area Name`, matches("^Estimate!!Total!!.+$"), -matches("^Estimate!!Total!!.+!!.+!!.+$")) %>%  #only selecting one layer deep in specificity
+  rename_prefix("Estimate", "")
+```
 
 
 # Combine data
