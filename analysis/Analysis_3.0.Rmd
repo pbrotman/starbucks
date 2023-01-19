@@ -137,5 +137,20 @@ tbl_occupation <- read_csv("../data/census/ACS_2021/County Level/Occupation (ACS
   rename_prefix("Estimate", "")
 ```
 
-
 # Combine data
+```{r}
+list_tbl_census <- list(tbl_race, tbl_hisp_latino, tbl_age_sex, tbl_education, tbl_household, tbl_income, tbl_industry, tbl_occupation)
+
+tbl_census_combined <- reduce(list_tbl_census, left_join)
+tbl_census_combined
+```
+
+Weight % fields by population
+```{r}
+tbl_census_combined <- tbl_census_combined %>% 
+  mutate(across(matches("^%"), ~.*Total)) %>% 
+  rename_with(~paste0("Weighted ", .), .cols = matches("^%"))
+```
+
+
+
