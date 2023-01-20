@@ -166,6 +166,13 @@ tbl_occupation <- read_csv("../data/census/ACS_2021/County Level/Occupation (ACS
   rename_prefix("Estimate", "")
 ```
 
+
+### Region/Division
+Different source from rest of census data -- has simpler format.
+```{r}
+tbl_regions <- read_csv("../data/census/Geography/Regions/regions.csv")
+```
+
 ## Combine data
 
 ### Combine census data
