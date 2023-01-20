@@ -17,10 +17,39 @@ library(sf)
 # Load data
 
 ## Starbucks data
+
+### Load Starbucks
+Convert starbucks long/lat to sf points
 ```{r}
-tbl_starbucks <- read_csv("../data/starbucks/directory.csv") %>%
-  filter(Country=="US")
+pts_starbucks <- read_csv("../data/starbucks/directory.csv") %>%
+  filter(Country=="US") %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) #sets/reads format to WGS 84
 ```
+
+### Load county polygons
+Note: all the other files in the zip need to be included for this to work, not just the .shp -  https://stackoverflow.com/questions/61282572/cant-read-shp-file-in-r
+```{r}
+shape_county <- st_read("../data/census/Geography/Geographic Shape Files/cb_2018_us_county_500k.shp") %>%
+  st_transform(crs = 4326)
+```
+
+
+### Join with geospatial data
+Tally # Starbucks per county
+```{r}
+tbl_starbucks_per_county <- st_join(pts_starbucks, shape_county) %>% 
+  group_by(AFFGEOID, STATEFP, COUNTYFP, NAME, `State/Province`) %>% 
+  summarise(n = n()) %>% 
+  arrange(desc(n))
+```
+
+Check: view Starbucks in MD
+```{r}
+ggplot(shape_county %>% filter(STATEFP=="24"))+
+  geom_sf(aes())+
+  geom_sf(data=tbl_starbucks_per_county %>% filter(STATEFP=="24"))
+```
+
 
 ## Census data
 
@@ -137,7 +166,9 @@ tbl_occupation <- read_csv("../data/census/ACS_2021/County Level/Occupation (ACS
   rename_prefix("Estimate", "")
 ```
 
-# Combine data
+## Combine data
+
+### Combine census data
 ```{r}
 list_tbl_census <- list(tbl_race, tbl_hisp_latino, tbl_age_sex, tbl_education, tbl_household, tbl_income, tbl_industry, tbl_occupation)
 
@@ -152,5 +183,8 @@ tbl_census_combined <- tbl_census_combined %>%
   rename_with(~paste0("Weighted ", .), .cols = matches("^%"))
 ```
 
+### Combine census and Starbucks data
+
+# Modeling
 
 
