@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 ```
 
 ```{r}
@@ -37,8 +37,8 @@ shape_county <- st_read("../data/census/Geography/Geographic Shape Files/cb_2018
 ### Join with geospatial data
 Tally # Starbucks per county
 ```{r}
-tbl_starbucks_per_county <- st_join(pts_starbucks, shape_county) %>% 
-  group_by(AFFGEOID, STATEFP, COUNTYFP, NAME, `State/Province`) %>% 
+tbl_starbucks_per_county <- st_join(pts_starbucks, shape_county) %>%
+  group_by(AFFGEOID, STATEFP, COUNTYFP) %>% 
   summarise(n = n()) %>% 
   arrange(desc(n))
 ```
@@ -108,7 +108,7 @@ tbl_age_sex <- read_csv("../data/census/ACS_2021/County Level/Age-Sex (ACSST5Y20
          .keep = "unused")
 ```
 
-Side Note: This does the same as the big mutate function. If there were more cloumns, this could be helpful, but it is overengineered for our use0case and less clear than the mutate.
+Side Note: This does the same as the big mutate function. If there were more columns, this could be helpful, but it is over-engineered for our use-case and less clear than the mutate.
 ```{r, eval=FALSE}
 # https://stackoverflow.com/questions/49816669/how-to-use-map-from-purrr-with-dplyrmutate-to-create-multiple-new-columns-base
 fn_combine_age <- function(tbl){
@@ -148,7 +148,7 @@ tbl_income <- read_csv("../data/census/ACS_2021/County Level/Income (ACSST5Y2021
 
 ### Industry
 Can group categories further using Bureau of Labor Statistic's industry hierarchy:
-https://www.bls.gov/iag/tgs/iag_index_naics.htm
+https://www.bls.gov/iag/tgs/iag_index_naics.htm.
 ```{r}
 tbl_industry <- read_csv("../data/census/ACS_2021/County Level/Industry (ACSST5Y2021.S2403-Data).csv", skip = 1) %>% 
   select(Geography, `Geographic Area Name`, matches("^Estimate!!Total!!.+$"), -matches("^Estimate!!Total!!.+!!.+!!.+$")) %>%  #only selecting one layer deep in specificity
@@ -173,6 +173,7 @@ Different source from rest of census data -- has simpler format.
 tbl_regions <- read_csv("../data/census/Geography/Regions/regions.csv")
 ```
 
+
 ## Combine data
 
 ### Combine census data
@@ -180,7 +181,6 @@ tbl_regions <- read_csv("../data/census/Geography/Regions/regions.csv")
 list_tbl_census <- list(tbl_race, tbl_hisp_latino, tbl_age_sex, tbl_education, tbl_household, tbl_income, tbl_industry, tbl_occupation)
 
 tbl_census_combined <- reduce(list_tbl_census, left_join)
-tbl_census_combined
 ```
 
 Weight % fields by population
@@ -190,8 +190,16 @@ tbl_census_combined <- tbl_census_combined %>%
   rename_with(~paste0("Weighted ", .), .cols = matches("^%"))
 ```
 
-### Combine census and Starbucks data
+### Combine Starbucks and census data
+```{r}
+tbl_all <- full_join(tbl_starbucks_per_county, tbl_census_combined, by=c("AFFGEOID"="Geography")) %>%
+  mutate(n = replace_na(n, 0)) %>% 
+  separate(`Geographic Area Name`, c("County", "State"), ", ") %>% 
+  filter(State!="Puerto Rico") %>% # May include later, but currently excluding to limit complexity
+  full_join(tbl_regions, by="State") %>% 
+  select(AFFGEOID:State, `State Code`:Division, everything())
+```
+
 
 # Modeling
-
 
