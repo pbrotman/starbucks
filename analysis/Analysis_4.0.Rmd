@@ -79,12 +79,10 @@ rename_prefix <- function(tbl, old_prefix, new_prefix){
 ### Race & Hispanic/Latino
 ```{r}
 tbl_race <- fn_load_decennial("Race (DECENNIALPL2020.P1-Data).csv") %>% 
-  select(Geography:`Population of two or more races`)
+  select(Geography:`Population of two or more races`, -`Population of one race`)
 
 tbl_hisp_latino <- fn_load_decennial("Hispanic-Latino (DECENNIALPL2020.P2-Data).csv") %>% 
   select(Geography:`Not Hispanic or Latino`)
-
-list_tbl_decennial <- list(race = tbl_race, hisp_latino = tbl_hisp_latino)
 ```
 
 
@@ -184,32 +182,53 @@ list_tbl_census <- list(tbl_race, tbl_hisp_latino, tbl_age_sex, tbl_education, t
 tbl_census_combined <- reduce(list_tbl_census, left_join)
 ```
 
-Weight % fields by population
+Divide non-% fields by pop
 ```{r}
-tbl_census_combined <- tbl_census_combined %>% 
-  mutate(across(matches("^%"), ~.*Total)) %>% 
-  rename_with(~paste0("Weighted ", .), .cols = matches("^%"))
+# tbl_census_combined <- tbl_census_combined %>% 
+#   mutate(across(!matches("^%") & !Geography:Total, ~round(./Total*100, digits=1))) %>% 
+#   rename_with(~paste0("% ", .), .cols = !matches("^%") & !Geography:Total)
 ```
 
 ### Combine Starbucks and census data
 ```{r}
-tbl_all <- full_join(tbl_starbucks_per_county, tbl_census_combined, by=c("AFFGEOID"="Geography")) %>%
+tbl_all0 <- full_join(tbl_starbucks_per_county, tbl_census_combined, by=c("AFFGEOID"="Geography")) %>%
   mutate(n = replace_na(n, 0)) %>% 
   separate(`Geographic Area Name`, c("County", "State"), ", ") %>% 
-  filter(State!="Puerto Rico") %>% # May include later, but currently excluding to limit complexity
+  filter(State!="Puerto Rico") %>%  # May include later, but currently excluding to limit complexity
   full_join(tbl_regions, by="State") %>% 
-  select(AFFGEOID:State, `State Code`:Division, everything())
+  select(AFFGEOID:State, `State Code`:Division, everything()) %>% 
+  rename_with(~str_replace_all(., " ", "_"))
+```
+
+Convert to percentages
+```{r}
+tbl_all <- tbl_all0 %>% 
+  ungroup() %>% 
+  mutate(across(!matches("^%") & !AFFGEOID:Total, ~round(./Total*100, digits=1))) %>%
+  # rename_with(~paste0("%_", .), .cols = !matches("^%") & !AFFGEOID:Total) %>% 
+  rename_with(~str_extract(., "(?<=%_in_).+$"), .cols = matches("^%_in_")) %>% 
+  rename_with(~str_extract(., "(?<=%_).+$"), .cols = matches("^%_")) %>%
+  mutate(Ratio = n/Total) %>% 
+  select(AFFGEOID:State, State_Code:Division, Ratio, everything())
+```
+
+```{r}
+# hist(tbl_all$Ratio)
 ```
 
 
 # Modeling
 ```{r}
 tbl_modeling <- tbl_all %>% 
-  st_drop_geometry() %>% 
+  # st_drop_geometry() %>% 
   ungroup() %>% 
-  select(-(AFFGEOID:`State Code`), n)
+  select(-(AFFGEOID:`State_Code`), n)
+
+attach(tbl_modeling)
 ```
 
+
+## Basic linear model
 ```{r}
 lm_pop <- lm(n ~ Total, data=tbl_modeling)
 summary(lm_pop)
@@ -218,6 +237,102 @@ plot(lm_pop)
 
 
 ```{r}
-
+lm_ratio_pop <- lm(Ratio ~ Total, data=tbl_modeling)
+summary(lm_ratio_pop)
+plot(lm_ratio_pop)
 ```
 
+
+## Log transformation
+```{r}
+lm_pop <- lm(log1p(n) ~ log1p(Total), data=tbl_modeling)
+summary(lm_pop)
+plot(lm_pop)
+```
+
+
+```{r}
+lm_pop <- lm(log1p(n) ~ log1p(Total), data=tbl_modeling %>% filter(n>=4))  #Try filtering by Total also
+summary(lm_pop)
+plot(lm_pop)
+```
+
+
+```{r}
+lm_pop <- lm(log1p(n) ~ log1p(Total), data=tbl_modeling %>% filter(Total>=50000))  #note how much your decreasing the # of available counties
+summary(lm_pop)
+plot(lm_pop)
+```
+
+
+## Region
+```{r}
+lm_region <- lm(log1p(n) ~ log1p(Total):Region, data=tbl_modeling %>% filter(Total>=50000))
+summary(lm_region)
+plot(lm_region)
+```
+### Division
+```{r}
+lm_division <- lm(log1p(n) ~ log1p(Total):Division, data=tbl_modeling %>% filter(Total>=50000))
+summary(lm_division)
+plot(lm_division)
+```
+## Transform/filter modeling table
+```{r}
+tbl_modeling <- tbl_modeling %>%  # risk in assigning to same name, fix later
+  filter(Total>=50000) %>% 
+  mutate(log_n = log1p(n), 
+         log_Total = log1p(Total))
+```
+
+
+## Race/ethnicity
+```{r}
+tbl <- tbl_modeling %>% 
+  select(log_n, log_Total, Black_or_African_American_alone:Hispanic_or_Latino)
+
+
+lm_race_hisp <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
+summary(lm_race_hisp)
+plot(lm_race_hisp)
+```
+
+### With region
+```{r}
+tbl <- tbl_modeling %>% 
+  select(log_n, log_Total, Region, Black_or_African_American_alone:Hispanic_or_Latino)
+
+
+lm_race_hisp <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
+summary(lm_race_hisp)
+plot(lm_race_hisp)
+```
+
+## Occupation
+```{r}
+tbl <- tbl_modeling %>% 
+  select(log_n, log_Total, `Management,_business,_science,_and_arts_occupations`: `Production,_transportation,_and_material_moving_occupations`)
+
+lm_occupation <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
+summary(lm_occupation)
+plot(lm_occupation)
+```
+
+```{r}
+tbl <- tbl_modeling %>% 
+  select(log_n, log_Total, Region, `Management,_business,_science,_and_arts_occupations`: `Production,_transportation,_and_material_moving_occupations`)
+
+lm_occupation <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
+summary(lm_occupation)
+plot(lm_occupation)
+```
+
+## Education
+```{r}
+tbl <- tbl_modeling %>% 
+  select(log_n, log_Total, `9th_to_12th_grade,_no_diploma`:Graduate_or_professional_degree)
+
+lm_education <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
+summary(lm_education)
+plot(lm_education)
+```
