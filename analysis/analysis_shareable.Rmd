@@ -1,8 +1,10 @@
 ---
 title: "Starbucks Demographic Analysis"
 author: "Parker Brotman"
-date: '2023-01-16'
-output: html_document
+date: '2023-03-02'
+output: 
+  html_document:
+    toc: true
 ---
 
 ```{r setup, include=FALSE}
@@ -14,12 +16,20 @@ library(tidyverse)
 library(sf)
 ```
 
+# Introduction
+
+Welcome to my analysis of the relationship between Starbucks locations in the US and population demographics! 
+
+In this analysis, I will first load the relevant data, then I will fit linear models to describe the number of Starbucks in a county as a function of demographic variables. 
+
+For the sake of brevity, I will focus on only a subset of the demographic variables.
+
 # Load data
 
 ## Starbucks data
 
 ### Load Starbucks
-Convert starbucks long/lat to sf points
+Convert starbucks long/lat to sf points.
 ```{r}
 pts_starbucks <- read_csv("../data/starbucks/directory.csv") %>%
   filter(Country=="US") %>% 
@@ -93,7 +103,6 @@ tbl_age_sex <- read_csv("../data/census/ACS_2021/County Level/Age-Sex (ACSST5Y20
   rename_prefix("Estimate!!Total", "") %>% 
   rename(Male = `Estimate!!Male!!Total population`,
          Female = `Estimate!!Female!!Total population`) %>% 
-  # fn_combine_age()
   mutate(`0 to 9 years` = `Under 5 years` + `5 to 9 years`,
          `10 to 19 years` = `10 to 14 years` + `15 to 19 years`,
          `20 to 29 years` = `20 to 24 years` + `25 to 29 years`,
@@ -181,13 +190,6 @@ list_tbl_census <- list(tbl_race, tbl_hisp_latino, tbl_age_sex, tbl_education, t
 tbl_census_combined <- reduce(list_tbl_census, left_join)
 ```
 
-Divide non-% fields by pop
-```{r}
-# tbl_census_combined <- tbl_census_combined %>% 
-#   mutate(across(!matches("^%") & !Geography:Total, ~round(./Total*100, digits=1))) %>% 
-#   rename_with(~paste0("% ", .), .cols = !matches("^%") & !Geography:Total)
-```
-
 ### Combine Starbucks and census data
 ```{r}
 tbl_all0 <- full_join(tbl_starbucks_per_county, tbl_census_combined, by=c("AFFGEOID"="Geography")) %>%
@@ -204,22 +206,17 @@ Convert to percentages
 tbl_all <- tbl_all0 %>% 
   ungroup() %>% 
   mutate(across(!matches("^%") & !AFFGEOID:Total, ~round(./Total*100, digits=1))) %>%
-  # rename_with(~paste0("%_", .), .cols = !matches("^%") & !AFFGEOID:Total) %>% 
   rename_with(~str_extract(., "(?<=%_in_).+$"), .cols = matches("^%_in_")) %>% 
   rename_with(~str_extract(., "(?<=%_).+$"), .cols = matches("^%_")) %>%
   mutate(Ratio = n/Total) %>% 
   select(AFFGEOID:State, State_Code:Division, Ratio, everything())
 ```
 
-```{r}
-# hist(tbl_all$Ratio)
-```
-
 
 # Modeling
+Pare down data to only modeling variables.
 ```{r}
-tbl_modeling <- tbl_all %>% 
-  # st_drop_geometry() %>% 
+tbl_modeling <- tbl_all %>%
   ungroup() %>% 
   select(-(AFFGEOID:`State_Code`), n)
 
@@ -228,39 +225,51 @@ attach(tbl_modeling)
 
 
 ## Basic linear model
+
 ```{r}
 lm_pop <- lm(n ~ Total, data=tbl_modeling)
 summary(lm_pop)
-plot(lm_pop)
+plot(n ~ Total); abline(lm_pop, col="red")
+plot(lm_pop, which=c(1,2))
 ```
 
 
-```{r}
-lm_ratio_pop <- lm(Ratio ~ Total, data=tbl_modeling)
-summary(lm_ratio_pop)
-plot(lm_ratio_pop)
-```
+### Comments
+Model: `# Starbucks ~ population`
+
+This is our simplest model. While the $R^2$ is quite good off the bat at $.857$, we are failing to meet some of the basic regression assumptions. The basic regression assumptions are as follows:
+
+- Linearity
+- Homoscedasticity (equal variance)
+- Independence
+- Normality
+
+While the relationship looks relatively *linear*, and we can assume our observations are close enough to *independent*, it is clear from that we have neither *homoscedasticity* (note how magnitude of the variance is positively correlated with fitted values in the RvF plot) nor *normality* (note how wildly the tails diverge from normality in the QQ plot).
+
+Given the fact that we have *linearity*, but are lacking *homoscedasticity* and *normality* due to the skewed nature of both Starbucks count and population, I will attempt in my next model to remediate the violated assumptions by *log transforming* both the independent and dependent variables.
 
 
 ## Log transformation
 ```{r}
 lm_pop <- lm(log1p(n) ~ log1p(Total), data=tbl_modeling)
 summary(lm_pop)
-plot(lm_pop)
+plot(log1p(n) ~ log1p(Total)); abline(lm_pop, col="red")
+plot(lm_pop, which=c(1,2))
 ```
 
-
+## Log transformation and set population threshold
 ```{r}
-lm_pop <- lm(log1p(n) ~ log1p(Total), data=tbl_modeling %>% filter(n>=4))  #Try filtering by Total also
-summary(lm_pop)
-plot(lm_pop)
+tbl_modeling_thres <- tbl_modeling %>% 
+  filter(Total>=50000)
+
+attach(tbl_modeling_thres)
 ```
 
-
 ```{r}
-lm_pop <- lm(log1p(n) ~ log1p(Total), data=tbl_modeling %>% filter(Total>=50000))  #note how much your decreasing the # of available counties
+lm_pop <- lm(log1p(n) ~ log1p(Total))  #note how much your decreasing the # of available counties
 summary(lm_pop)
-plot(lm_pop)
+plot(log1p(n) ~ log1p(Total)); abline(lm_pop, col="red")
+plot(lm_pop, which=c(1,2))
 ```
 
 ```{r}
@@ -282,135 +291,3 @@ tbl_all %>%
          res = resid(lm_pop)) %>% 
   arrange(res)
 ```
-
-## Region
-```{r}
-lm_region <- lm(log1p(n) ~ log1p(Total):Region, data=tbl_modeling %>% filter(Total>=50000))
-summary(lm_region)
-plot(lm_region)
-```
-### Division
-```{r}
-lm_division <- lm(log1p(n) ~ log1p(Total):Division, data=tbl_modeling %>% filter(Total>=50000))
-summary(lm_division)
-plot(lm_division)
-```
-
-## Transform/filter modeling table
-```{r}
-tbl_modeling <- tbl_modeling %>%  # risk in assigning to same name, fix later
-  filter(Total>=50000) %>% 
-  mutate(log_n = log1p(n), 
-         log_Total = log1p(Total))
-```
-
-
-## Race/ethnicity
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, Black_or_African_American_alone:Hispanic_or_Latino)
-
-
-lm_race_hisp <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_race_hisp)
-plot(lm_race_hisp)
-```
-
-### With region
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, Region, Black_or_African_American_alone:Hispanic_or_Latino)
-
-
-lm_race_hisp <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_race_hisp)
-plot(lm_race_hisp)
-```
-
-## Occupation
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, `Management,_business,_science,_and_arts_occupations`: `Natural_resources,_construction,_and_maintenance_occupations`)
-
-lm_occupation <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_occupation)
-plot(lm_occupation)
-```
-
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, Region, `Management,_business,_science,_and_arts_occupations`: `Natural_resources,_construction,_and_maintenance_occupations`)
-
-lm_occupation <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_occupation)
-plot(lm_occupation)
-```
-
-Note how occupation QQ plot deviates at lower end, while education deviates at upper end. Combine?
-
-## Education
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, `9th_to_12th_grade,_no_diploma`:Graduate_or_professional_degree)
-
-lm_education <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_education)
-plot(lm_education)
-```
-
-Highest R^2 so far (very close to occupation)
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, Region, `9th_to_12th_grade,_no_diploma`:Graduate_or_professional_degree)
-
-lm_education <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_education)
-plot(lm_education)
-```
-
-```{r}
-tbl_all %>% 
-  filter(Total>=50000) %>% 
-  select(AFFGEOID, County, State_Code, n) %>% 
-  mutate(log_pred = predict(lm_education),
-         pred = exp(log_pred)-1,
-         res = resid(lm_education)) %>% 
-  arrange(desc(res))
-```
-Appears to be counties with universities or tourism (# of state forests/parks, RV camp in Elkhart)
-
-Get tourism data
-
-```{r}
-tbl_all %>% 
-  filter(Total>=50000) %>% 
-  select(AFFGEOID, County, State_Code, n) %>% 
-  mutate(log_pred = predict(lm_education),
-         pred = exp(log_pred)-1,
-         res = resid(lm_education)) %>% 
-  arrange(res)
-```
-Considerable overlap with this list of most Mormon counties: https://www.deseret.com/faith/2021/7/8/22569016/which-county-has-the-second-highest-concentration-of-latter-day-saints-hint-its-not-in-utah
-
-Census does not collect religion data. Need another source.
-
-## Income
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, `Less_than_$10,000`:`$200,000_or_more`)
-
-lm_income <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_income)
-plot(lm_income)
-```
-
-
-```{r}
-tbl <- tbl_modeling %>% 
-  select(log_n, log_Total, Region, `$10,000_to_$14,999`:`$200,000_or_more`)
-
-lm_income <- lm(log_n ~ log_Total:. -log_Total, data=tbl)
-summary(lm_income)
-plot(lm_income)
-```
-
